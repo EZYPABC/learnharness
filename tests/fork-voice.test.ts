@@ -19,6 +19,9 @@ describe("ElevenLabs Scribe realtime URL", () => {
 	});
 	it("base64-encodes PCM frames", () => {
 		assert.equal(pcmToBase64(new Uint8Array([1, 2, 3, 255]).buffer), Buffer.from([1, 2, 3, 255]).toString("base64"));
+		// The worklet posts Int16Array views: little-endian sample bytes, full length.
+		const samples = new Int16Array([1000, -1000, 32767, -32768]);
+		assert.equal(pcmToBase64(samples), Buffer.from(samples.buffer).toString("base64"));
 		const big = new Uint8Array(100_000).map((_, i) => i % 256);
 		assert.equal(pcmToBase64(big.buffer), Buffer.from(big).toString("base64"));
 	});

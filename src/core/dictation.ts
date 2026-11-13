@@ -115,9 +115,14 @@ export function elevenLabsListenUrl(language: DictationLanguage, token: string):
 	return `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`;
 }
 
-/** Base64 for one PCM frame (browser + node safe, no Buffer). */
-export function pcmToBase64(buffer: ArrayBuffer): string {
-	const bytes = new Uint8Array(buffer);
+/** Base64 for one PCM frame (browser + node safe, no Buffer). The worklet
+ *  posts an Int16Array VIEW, not a raw ArrayBuffer: `new Uint8Array(view)`
+ *  would copy element-wise (truncating every sample to one byte, half the
+ *  frame) — always read the view's underlying bytes. */
+export function pcmToBase64(buffer: ArrayBuffer | ArrayBufferView): string {
+	const bytes = ArrayBuffer.isView(buffer)
+		? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+		: new Uint8Array(buffer);
 	let binary = "";
 	for (let i = 0; i < bytes.length; i += 0x8000) {
 		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
