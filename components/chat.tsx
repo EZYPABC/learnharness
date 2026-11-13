@@ -12,6 +12,7 @@ import { findSurfaceBoundary } from "./plugin-surface-targets";
 import { scheduleOpeningSubmission } from "./plugin-submission-opening";
 import { activeProblemOccurrenceOf, buildAnswer, toClientQuestion, type PluginSubmission, type PluginSubmissionTarget, type QuestionData } from "@/src/core";
 import { validatePluginBuiltinSubmissionAnswer } from "@/src/core";
+import { textDir } from "@/src/core/text-dir";
 import { visibleQueuedSteers } from "@/components/session-core";
 import { SetupDialog } from "@/components/setup-dialog";
 import { Hint } from "@/components/ui/hint";
@@ -368,6 +369,8 @@ export function Chat({
 	// must not churn), and the sidebar patch is instant via the window event —
 	// its 2.5s poll is only a backstop.
 	const [titleText, setTitleText] = useState(title);
+	// Fork: Hebrew titles render right-to-left, placed on the right of the bar.
+	const titleRtl = textDir(titleText) === "rtl";
 	const [renaming, setRenaming] = useState(false);
 	const [titleDraft, setTitleDraft] = useState("");
 	const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -1645,8 +1648,10 @@ export function Chat({
 				>
 					{renaming ? (
 						<>
+							{titleRtl && <div className="min-w-4 flex-1" aria-hidden="true" />}
 							<input
 								ref={titleInputRef}
+								dir="auto"
 								value={titleDraft}
 								onChange={(e) => setTitleDraft(e.target.value)}
 								onKeyDown={(e) => {
@@ -1670,10 +1675,12 @@ export function Chat({
 							{/* flex-1 spacer during rename too, so the chips stay at
 							    the right edge; clicks here commit via the header
 							    mousedown handler. */}
-							<div className="min-w-4 flex-1" aria-hidden="true" />
+							{!titleRtl && <div className="min-w-4 flex-1" aria-hidden="true" />}
 						</>
 					) : (
 					<>
+						{/* Fork: a Hebrew title sits on the right (spacer first). */}
+						{titleRtl && <div className="min-w-4 flex-1" aria-hidden="true" />}
 						<Hint
 							// F2 renames (registry) — surfaced on the hover.
 							label="Rename session"
@@ -1687,14 +1694,15 @@ export function Chat({
 								setRenaming(true);
 							}}
 							data-plugin-chrome-title
-							className="lh-no-drag -mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-3xl tracking-tight transition-colors hover:bg-accent"
+							dir={titleRtl ? "rtl" : undefined}
+							className="lh-no-drag -mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-start font-title text-3xl tracking-tight transition-colors hover:bg-accent"
 						>
 							{titleText}
 							</button>
 						</Hint>
 							{/* flex-1 spacer: keeps the chips at the right edge AND stays a
 							    drag surface (no carve-out) — the freed bar is grippable. */}
-							<div className="min-w-4 flex-1" aria-hidden="true" />
+							{!titleRtl && <div className="min-w-4 flex-1" aria-hidden="true" />}
 					</>
 					)}
 					{/* The plan chip (owner, plan-placement round): session-level

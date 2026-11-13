@@ -39,3 +39,19 @@ describe("auto text direction", () => {
 		assert.equal(firstStrongDir(doc.querySelector("ul")!), "rtl");
 	});
 });
+
+describe("textDir (title + question direction)", async () => {
+	const { textDir } = await import("../src/core/text-dir.ts");
+	it("reads the first strong prose character", () => {
+		assert.equal(textDir("אני רוצה ללמוד על ריצוף RNA"), "rtl");
+		assert.equal(textDir("RNA של תאים בודדים"), "ltr");
+		assert.equal(textDir("How do base editors work?"), "ltr");
+		assert.equal(textDir("123 …"), null);
+		assert.equal(textDir(null), null);
+	});
+	it("skips code and math before the prose", () => {
+		assert.equal(textDir("$x^2$ הוא ריבוע"), "rtl");
+		assert.equal(textDir("`foo()` מחזירה ערך"), "rtl");
+		assert.equal(textDir("[](https://x.com) שלום"), "rtl");
+	});
+});
