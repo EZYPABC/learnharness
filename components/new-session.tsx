@@ -239,7 +239,7 @@ export function DraftShell({
 	);
 }
 
-export function NewSession({ initialConfigured, mode = "teach" }: { initialConfigured: boolean; mode?: "teach" | "practice" }) {
+export function NewSession({ initialConfigured, mode = "teach", review = false }: { initialConfigured: boolean; mode?: "teach" | "practice"; review?: boolean }) {
 	const router = useRouter();
 	const [text, setText] = useState("");
 	/* The draft MIRROR ("nothing gets lost" round, 2026-10-01): the shell's
@@ -265,6 +265,23 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		setPicks(next);
 	};
 	const [pickerOpen, setPickerOpen] = useState(false);
+	// Knowledge decay (fork): ?review=1 seeds the practice draft with the
+	// most-faded propositions and a ready opening line (editable).
+	const reviewSeeded = useRef(false);
+	useEffect(() => {
+		if (!review || reviewSeeded.current) return;
+		reviewSeeded.current = true;
+		void fetch("/api/memory?faded=1&limit=12")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d: { faded?: { nodeId: string; name: string; statement: string }[] } | null) => {
+				const faded = d?.faded ?? [];
+				if (faded.length === 0) return;
+				if (picksRef.current.length === 0) applyPicks(faded.map((f) => ({ id: f.nodeId, name: f.name, statement: f.statement })));
+				if (!textRef.current) applyText("Review session: quiz me on what I've been forgetting (the picked propositions, most faded first).");
+			})
+			.catch(() => {});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [review]);
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
 	const openPicker = () => {
 		if (snapshot) {

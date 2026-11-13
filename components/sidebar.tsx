@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode, ThemeMode } from "@/src/core";
-import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { DumbbellIcon, HistoryIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -722,6 +722,7 @@ function SessionsSidebar() {
 						<span className="min-w-0 truncate">Practice</span>
 						<span className="sr-only">create a new practice session</span>
 					</button>
+					<ReviewButton onOpen={() => router.push("/chat/new?mode=practice&review=1")} />
 				</PluginSidebarActions>
 
 				<div className="mx-3 mb-2 flex items-center gap-2">
@@ -967,5 +968,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 			</SettingsDialogProvider></InteractionLayersProvider>
 		</HostContentRootContext.Provider>
 		</HostRouteLifetimeProvider>
+	);
+}
+
+/** Knowledge decay (fork): the review queue's door — a practice session
+ *  seeded with the most-faded propositions. Count refreshes on focus. */
+function ReviewButton({ onOpen }: { onOpen: () => void }) {
+	const [count, setCount] = useState<number | null>(null);
+	useEffect(() => {
+		let alive = true;
+		const load = () =>
+			fetch("/api/memory?faded=1&limit=100")
+				.then((r) => (r.ok ? r.json() : null))
+				.then((d: { faded?: unknown[] } | null) => {
+					if (alive && d?.faded) setCount(d.faded.length);
+				})
+				.catch(() => {});
+		load();
+		window.addEventListener("focus", load);
+		const t = setInterval(load, 10 * 60_000);
+		return () => {
+			alive = false;
+			window.removeEventListener("focus", load);
+			clearInterval(t);
+		};
+	}, []);
+	return (
+		<button
+			type="button"
+			data-testid="new-session-review"
+			title="Review faded knowledge"
+			onClick={onOpen}
+			className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+		>
+			<HistoryIcon className="size-3 shrink-0" />
+			<span className="min-w-0 truncate">Review</span>
+			{count ? <span className="ml-auto rounded-full bg-destructive/15 px-1.5 text-[10px] font-medium normal-case tracking-normal text-destructive">{count}</span> : null}
+			<span className="sr-only">start a review session of faded knowledge</span>
+		</button>
 	);
 }

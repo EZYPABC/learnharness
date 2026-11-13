@@ -1410,6 +1410,7 @@ export function GraphView({
 				x: positions.get(n.id)?.x ?? 0,
 				y: positions.get(n.id)?.y ?? 0,
 				label: n.name,
+				retention: snapshot.retention?.[n.id],
 			})),
 			edges: snapshot.edges.map((e) => ({ from: e.from, to: e.to })),
 			logicalEdges: snapshot.logicalEdges.map((e) => ({ from: e.from, to: e.to })),
@@ -1629,6 +1630,20 @@ export function GraphView({
 					className="lh-no-drag absolute z-10 w-80 max-w-[calc(100%-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
 				>
 					<NodeCardText name={selected.node.name} statement={selected.node.statement} />
+					{snapshot?.retention?.[selected.node.id] !== undefined && (() => {
+						// Knowledge decay (fork): the node's current recall estimate.
+						const r = snapshot.retention[selected.node.id]!;
+						const pct = Math.round(r * 100);
+						return (
+							<div data-testid="node-retention" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+								<span>Retention</span>
+								<span className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+									<span className={"block h-full " + (r < 0.7 ? "bg-destructive/70" : "bg-foreground/50")} style={{ width: `${pct}%` }} />
+								</span>
+								<span className={r < 0.7 ? "text-destructive" : ""}>{pct}%</span>
+							</div>
+						);
+					})()}
 					{selected.sourceIds.length > 0 ? (
 						<div className="mt-3 flex flex-col gap-1">
 							<div className="text-xs text-muted-foreground">Sessions</div>

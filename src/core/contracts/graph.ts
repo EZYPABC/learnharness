@@ -323,6 +323,9 @@ export interface GraphSnapshot {
 	 *  exists (core/layout.ts settle writes it). Absent on a fresh graph —
 	 *  the view then falls back to its own one-shot forceAtlas2 pass. */
 	positions?: Record<string, Position>;
+	/** Knowledge decay (fork): current recall probability (0..1) per
+	 *  proposition id — the canvas fades forgotten nodes. Absent = unknown. */
+	retention?: Record<string, number>;
 }
 
 /** A node's resting position in layout space (the positions ledger). */

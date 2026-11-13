@@ -92,6 +92,7 @@ describe("prober graph tools — registration", () => {
 		// phase-omnipresent) plus the two graph-map readers.
 		assert.deepEqual(Object.keys(tools).sort(), [
 			"ask_user_question",
+			"faded_propositions",
 			"find",
 			"grep",
 			"list_propositions",
@@ -101,6 +102,7 @@ describe("prober graph tools — registration", () => {
 			"probe",
 			"probe_done",
 			"read",
+			"record_recall",
 			"research",
 		]);
 	});

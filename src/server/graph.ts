@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { LEDGER_FILES, POSITIONS_FILE } from "../../config.ts";
+import { memoryView } from "./memory.ts";
 import type { GraphSnapshot } from "../core/contracts.ts";
 import type { GraphCostSummary } from "../core/cost-summary.ts";
 import { graphCostSummary } from "../core/cost-summary.ts";
@@ -22,7 +23,17 @@ import { callCost } from "./pricing.ts";
 export function graphView(): GraphSnapshot {
 	const organization = stores.sourceOrganizationStore.read();
 	const names = Object.fromEntries(Object.entries(organization.placements).flatMap(([id, p]) => p.name === undefined ? [] : [[id, p.name]]));
-	return graphSnapshot(stores, names);
+	const snapshot = graphSnapshot(stores, names);
+	// Knowledge decay (fork): retention rides the snapshot for the canvas fade.
+	try {
+		const memory = memoryView();
+		const retention: Record<string, number> = {};
+		for (const [id, state] of Object.entries(memory.states)) retention[id] = Math.round(state.retrievability * 1000) / 1000;
+		if (Object.keys(retention).length > 0) snapshot.retention = retention;
+	} catch {
+		/* decay is decoration — never take the graph down */
+	}
+	return snapshot;
 }
 
 /** The graph view's cost surface (GET /api/graph/costs — the 2026-09 cost
@@ -61,6 +72,7 @@ export function graphRevision(): number {
 		LEDGER_FILES.chains,
 		LEDGER_FILES.sessions,
 		LEDGER_FILES.coverage,
+		LEDGER_FILES.memoryReviews,
 		POSITIONS_FILE,
 	]) {
 		try {

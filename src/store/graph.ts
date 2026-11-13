@@ -48,6 +48,7 @@ import type {
 	SessionCheckpoint,
 } from "../core/contracts.ts";
 import type { GraphStore } from "../core/ports.ts";
+import type { ReviewEvent } from "../core/memory.ts";
 
 // ─── JSONL primitives ────────────────────────────────────────────────────────
 
@@ -161,6 +162,18 @@ export const graphStore: GraphStore = {
 	},
 	readCoverage(): CoverageEntry[] {
 		return readValid(LEDGER_FILES.coverage, isCoverageEntry);
+	},
+
+	readMemoryReviews(): ReviewEvent[] {
+		return readRawLines(LEDGER_FILES.memoryReviews).flatMap((raw): ReviewEvent[] => {
+			const e = raw as Partial<ReviewEvent>;
+			return typeof e.nodeId === "string" && typeof e.at === "number" && (e.grade === 1 || e.grade === 2 || e.grade === 3 || e.grade === 4)
+				? [{ nodeId: e.nodeId, at: e.at, grade: e.grade, source: "recall" }]
+				: [];
+		});
+	},
+	appendMemoryReviews(reviews): void {
+		for (const review of reviews) appendLine(LEDGER_FILES.memoryReviews, review);
 	},
 
 	// ── imported-notes bookkeeping (config.SOURCES_FILE — a JSON map) ──

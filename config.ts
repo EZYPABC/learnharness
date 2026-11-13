@@ -71,6 +71,9 @@ export const LEDGER_FILES = {
 	 *  the checkpoint's replacement for chat extractions — notes keep
 	 *  sessions.jsonl, whole-file as they are). */
 	coverage: path.join(/* turbopackIgnore: true */ PATHS.graph, "coverage.jsonl"),
+	/** Knowledge decay (fork): explicit graded recall checks (core/memory.ts
+	 *  ReviewEvent lines). Everything else in the memory model is derived. */
+	memoryReviews: path.join(/* turbopackIgnore: true */ PATHS.graph, "memory-reviews.jsonl"),
 } as const;
 
 /**

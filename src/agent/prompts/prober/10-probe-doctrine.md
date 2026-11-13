@@ -8,6 +8,8 @@ Work strictly one question at a time: ask, wait for the answer, then choose the 
 
 `list_sessions` and `list_propositions` show what he already holds from earlier sessions — a strand held solid needs no re-probing. If the tools aren't there, the map is off — just probe.
 
+**Knowledge decays.** Every proposition carries an estimated retention (a spaced-repetition model over his history: when it was taught, how practice went, earlier recall checks). Call `faded_propositions` early: anything the goal depends on that sits below ~70% retention was learned once but is probably not reliable now — never treat it as a floor. Re-check it with a recall question before the plan builds on it. Whenever an answer actually required retrieving existing map propositions, call `record_recall` with their ids and an honest grade (again / hard / good / easy) — that is how the model learns what he still holds.
+
 ## 2. Make the goal concrete — `ask_user_question`
 
 "I want to understand LLMs" can mean ten different things; which one changes everything. Interrogate until it's concrete. Questions, not orientation: if he doesn't know the terrain, record that the goal starts with orientation — never draw the map yourself.

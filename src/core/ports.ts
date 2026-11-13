@@ -133,6 +133,10 @@ export interface GraphStore {
 	upsertSource(source: NotesSource): void;
 	/** Every notes source record, by id order-insensitive. */
 	readSources(): NotesSource[];
+	/** Knowledge decay (fork): explicit graded recall checks, append-only.
+	 *  Optional — stores without it simply contribute no explicit recalls. */
+	readMemoryReviews?(): import("./memory.ts").ReviewEvent[];
+	appendMemoryReviews?(reviews: ReadonlyArray<import("./memory.ts").ReviewEvent & { note?: string }>): void;
 	/** Remove imported-source bookkeeping only; the service removes graph traces first. */
 	deleteSources(ids: ReadonlySet<string>): number;
 	/** Append one run's usage to a source record — idempotent per

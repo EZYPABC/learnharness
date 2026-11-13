@@ -84,6 +84,16 @@ export interface CanvasNode {
 	x: number;
 	y: number;
 	label: string;
+	/** Knowledge decay (fork): recall probability 0..1 — faded knowledge
+	 *  draws fainter. Absent = full strength. */
+	retention?: number;
+}
+
+/** Retention → disc alpha, quantized so the frame stays a handful of fills. */
+export function retentionAlpha(retention: number | undefined): number {
+	if (retention === undefined) return 1;
+	const r = Math.min(1, Math.max(0, retention));
+	return Math.round((0.22 + 0.78 * r) * 5) / 5 || 0.2;
 }
 
 /** One directed edge of the DERIVED view (chains-primary, 2026-09-30):
@@ -653,6 +663,8 @@ export class GraphCanvasRenderer {
 	private geoVersion = 0; // bump = geometry inputs changed
 	private builtVersion = -1; // version the cache was built at
 	private nodesPath: Path2D | null = null;
+	/** Disc paths bucketed by decay alpha (fork). */
+	private nodeBuckets: Array<{ alpha: number; path: Path2D }> = [];
 	private shaftsPath: Path2D = new Path2D();
 	private headsPath: Path2D = new Path2D();
 	private regionCanvas: HTMLCanvasElement | null = null;
@@ -1255,12 +1267,19 @@ export class GraphCanvasRenderer {
 		// Node discs: one Path2D, one fill() per frame. Implication nodes
 		// are pure geometry — never a disc, never a label, never picked.
 		const nodesPath = new Path2D();
+		const buckets = new Map<number, Path2D>();
 		for (const n of data.nodes) {
 			if (!isVisible(n.id) || isImpNodeId(n.id)) continue;
 			nodesPath.moveTo(n.x + nodeR, n.y);
 			nodesPath.arc(n.x, n.y, nodeR, 0, Math.PI * 2);
+			const alpha = retentionAlpha(n.retention);
+			let bucket = buckets.get(alpha);
+			if (!bucket) buckets.set(alpha, (bucket = new Path2D()));
+			bucket.moveTo(n.x + nodeR, n.y);
+			bucket.arc(n.x, n.y, nodeR, 0, Math.PI * 2);
 		}
 		this.nodesPath = nodesPath;
+		this.nodeBuckets = [...buckets].map(([alpha, path]) => ({ alpha, path }));
 
 		// Edge shafts + arrowheads (rendering arc, owner 2026-09-30): all
 		// arrows are PLAIN single shafts — the old double-shaft glyph is
@@ -1679,7 +1698,15 @@ export class GraphCanvasRenderer {
 
 		// 4. Nodes: one cached Path2D, one fill.
 		ctx.fillStyle = data.colors.node;
-		ctx.fill(this.nodesPath);
+		if (this.nodeBuckets.length <= 1 && (this.nodeBuckets[0]?.alpha ?? 1) === 1) ctx.fill(this.nodesPath);
+		else {
+			ctx.save();
+			for (const { alpha, path } of this.nodeBuckets) {
+				ctx.globalAlpha = alpha;
+				ctx.fill(path);
+			}
+			ctx.restore();
+		}
 
 		// 6. Node labels — one global gate, faded together. World-scaled
 		// with the graph (they grow as you zoom in, Obsidian-style).
