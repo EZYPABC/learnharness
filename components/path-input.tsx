@@ -322,6 +322,7 @@ export const PathInput = React.forwardRef<HTMLDivElement, PathInputProps>(functi
 			{...props}
 			ref={rootRef}
 			role="textbox"
+			dir="auto"
 			aria-label={props["aria-label"] ?? placeholder}
 			aria-multiline={singleLine ? "false" : "true"}
 			aria-placeholder={placeholder}

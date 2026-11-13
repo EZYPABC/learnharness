@@ -634,3 +634,15 @@ body {
 	outline: 1px solid var(--border);
 	border-radius: 0.25rem;
 }
+
+/* Fork: auto text direction (see components/auto-dir.tsx). Each line of a
+   text field picks its own direction from its first strong character; math
+   and code always stay left-to-right, isolated inside RTL sentences. */
+[contenteditable="true"][dir="auto"], textarea[dir="auto"] {
+	unicode-bidi: plaintext;
+	text-align: start;
+}
+.katex, pre, code {
+	direction: ltr;
+	unicode-bidi: isolate;
+}
