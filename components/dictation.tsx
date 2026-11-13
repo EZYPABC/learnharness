@@ -7,6 +7,7 @@ import { Hint } from "@/components/ui/hint";
 import { deepgramListenUrl, elevenLabsListenUrl, pcmToBase64, type DictationLanguage, type SttEngine } from "@/src/core";
 import { newCommitPacer, paceCommit, resetCommitPacer } from "@/src/core/dictation";
 import { frameRms, newDictationDiag, reportDictation, type DictationDiag } from "@/components/dictation-diag";
+import { cleanDictation, dictationCleanupEnabled } from "@/components/dictation-cleanup";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 import { dispatchFocusedPluginShortcut } from "@/components/plugin-input-focus";
@@ -424,7 +425,11 @@ export function useDictation({ append, destination = "primary", disabled = false
 		if (bufferRef.current.length === 0) return;
 		const text = bufferRef.current.join(" ");
 		bufferRef.current = [];
-		return (destinationRef.current?.append ?? appendRef.current)(text);
+		const deliver = destinationRef.current?.append ?? appendRef.current;
+		// Fork: a cheap-model cleanup pass (misheard words, fillers,
+		// punctuation) before the text lands; the raw text on any failure.
+		if (!dictationCleanupEnabled() || text.trim().length < 12) return deliver(text);
+		return cleanDictation(text).then((cleaned) => deliver(cleaned));
 	}, []);
 
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */

@@ -43,6 +43,16 @@ import { isInteractionScopeEligible } from "@/components/plugin-input-focus";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { DictationLanguageSetting } from "@/components/dictation-language";
+import { useDictationCleanup } from "@/components/dictation-cleanup";
+import { SettingsRow, Toggle } from "@/components/settings/controls";
+
+/** Fork: the per-device dictation cleanup switch (Haiku pass). */
+function DictationCleanupSetting() {
+	const [on, setOn] = useDictationCleanup();
+	return <SettingsRow label="Clean up transcript" hint="A fast model fixes misheard words, fillers and punctuation before the text lands" testid="row-dictation-cleanup">
+		<Toggle checked={on} onChange={setOn} label="Clean up dictated text" />
+	</SettingsRow>;
+}
 
 /** Voice-engine keys render under "Dictation" (fork: ElevenLabs + Deepgram). */
 const VOICE_KEY_IDS: ReadonlySet<string> = new Set(["ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY"]);
@@ -604,6 +614,7 @@ export function KeysSection({
 				))}
 				{label === "Dictation" && <>
 					<DictationLanguageSetting />
+					<DictationCleanupSetting />
 					<p data-testid="dictation-setup-hint" className="px-1 text-[11px] leading-relaxed text-muted-foreground/70">
 						ElevenLabs is used when its key is set (dictation + read-aloud). Otherwise, create a <a
 							href="https://console.deepgram.com/"

@@ -635,7 +635,7 @@ function QuestionDockForm({
 											: "Question"}
 					{qd.mode === "multi-select" && " · select all that apply"}
 				</div>
-				<div className="mb-3 font-medium">
+				<div className="mb-3 font-medium" data-dictation-context="">
 					<ToolContentResponse>{qd.question}</ToolContentResponse>
 				</div>
 				{qd.context && (

@@ -29,3 +29,11 @@ Branch `yehonatan/custom` on top of upstream v0.6.1.
 - `tailscale serve --bg --https=8443 http://127.0.0.1:3077` →
   https://maindesktop.tail51df21.ts.net:8443 (tailnet only; HTTPS is required for the mic).
 - After a code change: `npm run build`, then restart the server process.
+
+## Dictation cleanup (Haiku)
+- After Stop, the transcript goes through `POST /api/stt/cleanup` before landing in the field:
+  misheard words (domain-aware: genomics), fillers, punctuation, clear phrasing — never answering.
+  The pending question (`[data-dictation-context]`) is passed as context.
+- Claude Code: a direct one-shot `claude -p --model haiku` with `MAX_THINKING_TOKENS=0` (~3–4s; the
+  default thinking took ~45s). Otherwise the cheap slot. Any failure/timeout (25s) → raw text.
+- Per-device switch: Settings → Keys → Dictation → "Clean up transcript" (default on).

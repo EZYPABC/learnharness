@@ -237,7 +237,8 @@ for (const source of ["none", "file", "env"] as const) test(`Language is below t
 	assert.equal(rows[0]!.getAttribute("data-testid"), "key-elevenlabs_api_key");
 	assert.equal(rows[1]!.getAttribute("data-testid"), "key-deepgram_api_key");
 	assert.equal(rows[2]!.getAttribute("data-testid"), "row-dictation-language");
-	assert.equal(rows[3]!.getAttribute("data-testid"), "dictation-setup-hint");
+	assert.equal(rows[3]!.getAttribute("data-testid"), "row-dictation-cleanup");
+	assert.equal(rows[4]!.getAttribute("data-testid"), "dictation-setup-hint");
 	assert.equal(byTest("dictation-setup-hint").textContent, "ElevenLabs is used when its key is set (dictation + read-aloud). Otherwise, create a Deepgram API key with the Member role or higher, then add it above.");
 	assert.match(byTest("dictation-setup-hint").className, /text-muted-foreground/);
 	assert.equal(byTest("dictation-setup-hint").querySelector("a")!.href, "https://console.deepgram.com/");
