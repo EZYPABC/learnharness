@@ -5,6 +5,8 @@ import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
 import { deepgramListenUrl, elevenLabsListenUrl, pcmToBase64, type DictationLanguage, type SttEngine } from "@/src/core";
+import { newCommitPacer, paceCommit, resetCommitPacer } from "@/src/core/dictation";
+import { frameRms, newDictationDiag, reportDictation, type DictationDiag } from "@/components/dictation-diag";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 import { dispatchFocusedPluginShortcut } from "@/components/plugin-input-focus";
@@ -405,6 +407,11 @@ export function useDictation({ append, destination = "primary", disabled = false
 	/** The deferred transcript (owner round 2): finals land here during the
 	 *  run and flush into the primary input once, at teardown. */
 	const bufferRef = useRef<string[]>([]);
+	/** Fork: client commit pacing (see paceCommit) + a per-run diagnostic
+	 *  report, beaconed to /api/stt/debug at teardown so a bad run leaves
+	 *  evidence on the server (the audio itself never touches it). */
+	const pacerRef = useRef(newCommitPacer());
+	const diagRef = useRef<DictationDiag | null>(null);
 	/** Resolvers waiting for the run to fully end (finish(), owner
 	 *  2026-10-01): released by cleanup() — every terminal path runs it. */
 	const waitersRef = useRef<Array<{ resolve: () => void; reject: (error: unknown) => void }>>([]);
@@ -423,6 +430,15 @@ export function useDictation({ append, destination = "primary", disabled = false
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
 	const cleanup = useCallback((warmNext = true) => {
 		const endGen = ++genRef.current;
+		const diag = diagRef.current;
+		diagRef.current = null;
+		if (diag) {
+			diag.durationMs = Math.round(performance.now() - diag.t0);
+			diag.bufferedSegments = bufferRef.current.length;
+			diag.deliveredChars = bufferRef.current.join(" ").length;
+			diag.tail = bufferRef.current.join(" ").slice(-160);
+			reportDictation(diag);
+		}
 		let appended: unknown;
 		// A second cleanup (cancel/dispose) cannot turn an unfinished async
 		// append into a successful finish: that would send the old draft.
@@ -489,8 +505,12 @@ export function useDictation({ append, destination = "primary", disabled = false
 			wsRef.current = ws;
 			partialRef.current = "";
 			closingRef.current = false;
+			pacerRef.current = newCommitPacer();
+			diagRef.current ??= newDictationDiag(language);
+			diagRef.current.sockets++;
 			ws.addEventListener("open", () => {
 				if (gen !== genRef.current) return;
+				if (diagRef.current) diagRef.current.flushedPending += pendingRef.current.length;
 				for (const frame of pendingRef.current) ws.send(elevenLabsFrame(frame));
 				pendingRef.current = [];
 				setPhase("recording");
@@ -504,15 +524,20 @@ export function useDictation({ append, destination = "primary", disabled = false
 					return;
 				}
 				const type = msg.message_type ?? "";
+				const diag = diagRef.current;
+				if (diag) diag.messages[type] = (diag.messages[type] ?? 0) + 1;
 				if (type === "partial_transcript") {
 					partialRef.current = msg.text ?? "";
 				} else if (type === "committed_transcript") {
 					const text = (msg.text ?? "").trim();
 					if (text) bufferRef.current.push(text);
 					partialRef.current = "";
+					resetCommitPacer(pacerRef.current);
+					if (diag) diag.commits.push({ atMs: Math.round(performance.now() - diag.t0), chars: text.length });
 					// The closing commit landed: the run is complete.
 					if (closingRef.current) cleanup();
 				} else if (/error/i.test(type)) {
+					if (diag) diag.errors.push(`${type}: ${msg.error ?? msg.message ?? ""}`.slice(0, 200));
 					if (type === "insufficient_audio_activity" || /insufficient_audio/i.test(type)) {
 						if (closingRef.current) cleanup();
 						return;
@@ -523,6 +548,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 			});
 			ws.addEventListener("close", (ev) => {
 				if (gen !== genRef.current) return;
+				diagRef.current?.closes.push({ atMs: Math.round(performance.now() - (diagRef.current?.t0 ?? 0)), code: ev.code, reason: ev.reason.slice(0, 120), closing: closingRef.current });
 				if (closingRef.current || ev.code === 1000) {
 					if (partialRef.current.trim()) bufferRef.current.push(partialRef.current.trim());
 					partialRef.current = "";
@@ -690,12 +716,26 @@ export function useDictation({ append, destination = "primary", disabled = false
 					levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
 				} else if (msg.type === "audio") {
 					const ws = wsRef.current;
-					if (ws && ws.readyState === WebSocket.OPEN) ws.send(engineRef.current === "elevenlabs" ? elevenLabsFrame(msg.buffer!) : msg.buffer!);
+					const diag = diagRef.current;
+					if (diag) diag.frames++;
+					if (ws && ws.readyState === WebSocket.OPEN) {
+						ws.send(engineRef.current === "elevenlabs" ? elevenLabsFrame(msg.buffer!) : msg.buffer!);
+						if (diag) diag.framesSent++;
+						// Fork: commit at a quiet moment before Scribe's ~35s hard cut.
+						if (engineRef.current === "elevenlabs" && !closingRef.current && paceCommit(pacerRef.current, frameRms(msg.buffer!))) {
+							ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: "", commit: true, sample_rate: 16000 }));
+							if (diag) diag.forcedCommits++;
+						}
+					}
 					// Mitigation A: not OPEN yet (handshake or reconnect gap) —
 					// queue, capped; the open handler flushes in order.
 					else {
+						if (diag) diag.framesQueued++;
 						pendingRef.current.push(msg.buffer!);
-						if (pendingRef.current.length > 256) pendingRef.current.shift();
+						if (pendingRef.current.length > 256) {
+							pendingRef.current.shift();
+							if (diag) diag.framesDropped++;
+						}
 					}
 				}
 			};
@@ -750,6 +790,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 		const ws = wsRef.current;
 		if (ws && ws.readyState === WebSocket.OPEN && engineRef.current === "elevenlabs") {
 			closingRef.current = true;
+			if (diagRef.current) diagRef.current.stopAtMs = Math.round(performance.now() - diagRef.current.t0);
 			try {
 				// Force-commit whatever is still uncommitted; the committed
 				// transcript (or the close) finishes the run.
@@ -786,6 +827,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 		// Discard first, teardown second — cleanup() flushes, and the now-empty
 		// buffer makes that flush a no-op. Also kills a "stopping" run: the
 		// flush already underway is abandoned (its timer is cleared inside).
+		if (diagRef.current) diagRef.current.canceled = true;
 		bufferRef.current = [];
 		cleanup();
 	}, [cleanup]);

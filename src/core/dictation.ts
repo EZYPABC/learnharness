@@ -108,11 +108,58 @@ export function elevenLabsListenUrl(language: DictationLanguage, token: string):
 		token,
 		audio_format: "pcm_16000",
 		commit_strategy: "vad",
-		vad_silence_threshold_secs: "1.2",
+		// Shorter than the 1.2s we started with: natural breath pauses
+		// commit, so fewer segments reach the server's ~35s hard cut.
+		vad_silence_threshold_secs: "0.8",
 	});
 	const code = elevenLabsLanguage(language);
 	if (code) params.set("language_code", code);
 	return `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`;
+}
+
+/**
+ * Client-side commit pacing (fork). Scribe only commits on a VAD silence;
+ * with a room's constant background noise there may be none, and the
+ * server then hard-cuts the segment at ~35s — mid-word, garbling the words
+ * at the seam. We commit ourselves first: once a segment is SOFT_MS old,
+ * at the first quiet frame (well below the recent speech level); at
+ * HARD_MS no matter what. Pure: the hook feeds frames, acts on `true`.
+ */
+export const COMMIT_SOFT_MS = 18_000;
+export const COMMIT_HARD_MS = 28_000;
+export const FRAME_MS = 128; // 2048 samples @ 16 kHz (the worklet's frame)
+
+export interface CommitPacer {
+	/** ms of audio sent since the last commit (ours or the server's). */
+	sinceCommitMs: number;
+	/** Recent frame levels (≈3s window) for the relative quiet test. */
+	recent: number[];
+}
+
+export function newCommitPacer(): CommitPacer {
+	return { sinceCommitMs: 0, recent: [] };
+}
+
+/** Feed one frame's RMS; returns true when a commit should be sent now
+ *  (the pacer resets itself in that case). */
+export function paceCommit(p: CommitPacer, rms: number): boolean {
+	p.sinceCommitMs += FRAME_MS;
+	p.recent.push(rms);
+	if (p.recent.length > 24) p.recent.shift();
+	let commit = false;
+	if (p.sinceCommitMs >= COMMIT_HARD_MS) commit = true;
+	else if (p.sinceCommitMs >= COMMIT_SOFT_MS && p.recent.length >= 8) {
+		const sorted = [...p.recent].sort((a, b) => a - b);
+		const speech = sorted[Math.floor(sorted.length * 0.8)] ?? 0; // loud-ish level
+		commit = speech > 0 && rms < speech * 0.35;
+	}
+	if (commit) resetCommitPacer(p);
+	return commit;
+}
+
+/** A server-side commit landed: the segment clock restarts. */
+export function resetCommitPacer(p: CommitPacer): void {
+	p.sinceCommitMs = 0;
 }
 
 /** Base64 for one PCM frame (browser + node safe, no Buffer). The worklet

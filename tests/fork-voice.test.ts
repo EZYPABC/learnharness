@@ -25,6 +25,31 @@ describe("ElevenLabs Scribe realtime URL", () => {
 		const big = new Uint8Array(100_000).map((_, i) => i % 256);
 		assert.equal(pcmToBase64(big.buffer), Buffer.from(big).toString("base64"));
 	});
+	it("paces commits: a quiet frame after the soft limit, always by the hard limit", async () => {
+		const { newCommitPacer, paceCommit, COMMIT_SOFT_MS, COMMIT_HARD_MS, FRAME_MS } = await import("../src/core/dictation.ts");
+		// Constant loud speech (no pause at all): only the hard cap commits.
+		const loud = newCommitPacer();
+		let at = 0;
+		for (let i = 1; i <= 400 && !at; i++) if (paceCommit(loud, 0.2)) at = i * FRAME_MS;
+		assert.ok(at >= COMMIT_HARD_MS && at < COMMIT_HARD_MS + FRAME_MS, `hard commit at ${at}`);
+		// Speech with a dip after the soft limit: commits on the dip.
+		const p = newCommitPacer();
+		const soft = Math.ceil(COMMIT_SOFT_MS / FRAME_MS);
+		let fired = -1;
+		for (let i = 1; i <= soft + 20; i++) {
+			const rms = i === soft + 5 ? 0.01 : 0.2;
+			if (paceCommit(p, rms)) { fired = i; break; }
+		}
+		assert.equal(fired, soft + 5);
+		// A dip BEFORE the soft limit never commits.
+		const early = newCommitPacer();
+		for (let i = 1; i < soft - 1; i++) assert.equal(paceCommit(early, i % 10 === 0 ? 0.01 : 0.2), false);
+	});
+	it("frame RMS reads Int16 views", async () => {
+		const { frameRms } = await import("../components/dictation-diag.ts");
+		assert.equal(frameRms(new Int16Array([0, 0, 0, 0])), 0);
+		assert.ok(Math.abs(frameRms(new Int16Array([16384, -16384])) - 0.5) < 1e-9);
+	});
 });
 
 describe("speakableText", () => {
