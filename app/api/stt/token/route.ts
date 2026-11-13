@@ -1,29 +1,37 @@
 /**
- * POST-less BYOK mint: the renderer never holds the real Deepgram key.
+ * POST-less BYOK mint: the renderer never holds a real STT key.
  *
- * The key lives server-side only (auth.json → process.env in the desktop
- * app; .env.local in dev — same seam as OPENROUTER_API_KEY). A dictation
- * run starts here: mint a short-lived access token (TTL 300s — a run can
- * outlast the 30s default), the renderer opens its WebSocket to Deepgram
- * with it, and audio flows renderer → Deepgram directly, never through
- * this server. The token is only checked at the WebSocket handshake, so
- * long dictation sessions survive the TTL fine (Deepgram docs).
- *
- * NOTE: the key needs ≥ Member permission in the Deepgram console to call
- * /auth/grant (their docs, token-based auth FAQ) — plain read/transcribe
- * keys return FORBIDDEN here.
+ * Fork: two engines. ElevenLabs Scribe v2 realtime is preferred whenever
+ * ELEVENLABS_API_KEY is set (single-use token, 15 min, consumed on the
+ * socket handshake); Deepgram stays as the fallback engine (short-lived
+ * JWT via /auth/grant, needs ≥ Member permission). Audio flows renderer →
+ * provider directly, never through this server.
  */
 import { keyValue } from "@/src/server";
 
-export async function GET() {
-	const key = keyValue("DEEPGRAM_API_KEY");
-	if (!key) {
-		return Response.json(
-			{ message: "No DEEPGRAM_API_KEY — add it to auth.json (desktop) or .env.local (dev)." },
-			{ status: 503 },
-		);
+async function elevenLabsToken(key: string): Promise<Response> {
+	try {
+		const res = await fetch("https://api.elevenlabs.io/v1/single-use-token/realtime_scribe", {
+			method: "POST",
+			headers: { "xi-api-key": key },
+			body: "", // ElevenLabs requires Content-Length (411 otherwise)
+		});
+		if (!res.ok) {
+			const detail = await res.text();
+			return Response.json(
+				{ message: `ElevenLabs token failed (${res.status}): ${detail.slice(0, 200)}` },
+				{ status: 502 },
+			);
+		}
+		const data = (await res.json()) as { token?: string };
+		if (!data.token) return Response.json({ message: "ElevenLabs returned no token" }, { status: 502 });
+		return Response.json({ token: data.token, engine: "elevenlabs" });
+	} catch {
+		return Response.json({ message: "ElevenLabs unreachable" }, { status: 502 });
 	}
+}
 
+async function deepgramToken(key: string): Promise<Response> {
 	try {
 		const res = await fetch("https://api.deepgram.com/v1/auth/grant", {
 			method: "POST",
@@ -41,8 +49,19 @@ export async function GET() {
 		if (!data.access_token) {
 			return Response.json({ message: "Deepgram grant returned no token" }, { status: 502 });
 		}
-		return Response.json({ token: data.access_token });
+		return Response.json({ token: data.access_token, engine: "deepgram" });
 	} catch {
 		return Response.json({ message: "Deepgram unreachable" }, { status: 502 });
 	}
+}
+
+export async function GET() {
+	const eleven = keyValue("ELEVENLABS_API_KEY");
+	if (eleven) return elevenLabsToken(eleven);
+	const deepgram = keyValue("DEEPGRAM_API_KEY");
+	if (deepgram) return deepgramToken(deepgram);
+	return Response.json(
+		{ message: "No ELEVENLABS_API_KEY or DEEPGRAM_API_KEY — add one in Settings → Keys." },
+		{ status: 503 },
+	);
 }

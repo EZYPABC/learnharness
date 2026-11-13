@@ -88,3 +88,39 @@ export function deepgramListenUrl(language: DictationLanguage): string {
 		"&smart_format=true&punctuate=true&endpointing=300" +
 		`&language=${encodeURIComponent(language)}`;
 }
+
+/** The speech-to-text engines the token route can mint for. ElevenLabs
+ *  Scribe is preferred whenever its key is present (fork: Hebrew-first). */
+export type SttEngine = "elevenlabs" | "deepgram";
+
+/** Scribe's language_code is ISO-639-1/3 only: strip the locale suffix;
+ *  "multi" means auto-detect (parameter omitted). */
+export function elevenLabsLanguage(language: DictationLanguage): string | null {
+	if (language === "multi") return null;
+	return (language.split("-")[0] ?? language).toLowerCase();
+}
+
+/** Scribe v2 realtime: pcm_16000 (our worklet's linear16 16kHz mono),
+ *  VAD commits on pauses; the single-use token authenticates the socket. */
+export function elevenLabsListenUrl(language: DictationLanguage, token: string): string {
+	const params = new URLSearchParams({
+		model_id: "scribe_v2_realtime",
+		token,
+		audio_format: "pcm_16000",
+		commit_strategy: "vad",
+		vad_silence_threshold_secs: "1.2",
+	});
+	const code = elevenLabsLanguage(language);
+	if (code) params.set("language_code", code);
+	return `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`;
+}
+
+/** Base64 for one PCM frame (browser + node safe, no Buffer). */
+export function pcmToBase64(buffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(buffer);
+	let binary = "";
+	for (let i = 0; i < bytes.length; i += 0x8000) {
+		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	}
+	return btoa(binary);
+}

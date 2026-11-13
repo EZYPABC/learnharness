@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
-import { deepgramListenUrl, type DictationLanguage } from "@/src/core";
+import { deepgramListenUrl, elevenLabsListenUrl, pcmToBase64, type DictationLanguage, type SttEngine } from "@/src/core";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 import { dispatchFocusedPluginShortcut } from "@/components/plugin-input-focus";
@@ -109,7 +109,9 @@ export const DEEPGRAM_KEY_ID = "DEEPGRAM_API_KEY";
  * (desktop) or .env.local (dev)") — the surface says the short truth
  * instead. Exported for pins; the errored idle button's click recognizes
  * it and deep-links Settings → Keys → the Deepgram row. */
-export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
+export const DICTATION_KEYLESS = "Dictation needs an ElevenLabs or Deepgram key";
+/** The preferred engine's key row (fork: ElevenLabs Scribe first). */
+export const ELEVENLABS_KEY_ID = "ELEVENLABS_API_KEY";
 export const DICTATION_ACTIVE_ELSEWHERE = "Dictation is active elsewhere";
 
 // Mounted controllers do not claim capture. Only start() acquires the single
@@ -150,14 +152,16 @@ function registerController(id: symbol, controller: { primary: boolean; toggle: 
  *  DEEPGRAM_API_KEY) is the route's ONLY 503 — the raw message is
  *  dev-speak, so the error becomes the short client-authored line
  *  (zero-keys wave, owner 2026-09-25). */
-async function mintFreshToken(): Promise<string> {
+export interface MintedToken { token: string; engine: SttEngine }
+
+async function mintFreshToken(): Promise<MintedToken> {
 	const res = await fetch("/api/stt/token");
-	const data = (await res.json()) as { token?: string; message?: string };
+	const data = (await res.json()) as { token?: string; engine?: SttEngine; message?: string };
 	if (!res.ok || !data.token) {
 		if (res.status === 503) throw new Error(DICTATION_KEYLESS);
 		throw new Error(data.message ?? `token route ${res.status}`);
 	}
-	return data.token;
+	return { token: data.token, engine: data.engine ?? "deepgram" };
 }
 
 /** Warm-token cache (mitigation D, owner 2026-09-27): the click path takes
@@ -169,15 +173,15 @@ async function mintFreshToken(): Promise<string> {
  *  failures are silently tolerated (a keyless pre-mint just doesn't warm). */
 export const WARM_TOKEN_TTL_MS = 3 * 60_000;
 
-export type WarmMinter = { mint: () => Promise<string>; refresh: () => void };
+export type WarmMinter<T = string> = { mint: () => Promise<T>; refresh: () => void };
 
-export function createWarmMinter(
-	mint: () => Promise<string>,
+export function createWarmMinter<T = string>(
+	mint: () => Promise<T>,
 	now: () => number = Date.now,
 	ttlMs: number = WARM_TOKEN_TTL_MS,
-): WarmMinter {
-	let warm: { p: Promise<string>; at: number } | null = null;
-	const m: WarmMinter = {
+): WarmMinter<T> {
+	let warm: { p: Promise<T>; at: number } | null = null;
+	const m: WarmMinter<T> = {
 		mint: () => {
 			if (!warm || now() - warm.at > ttlMs) {
 				const p = mint().catch((e: unknown) => {
@@ -214,6 +218,11 @@ function ensureAudioGraph(): { ctx: AudioContext; module: Promise<void> } {
 		});
 	}
 	return { ctx: sharedCtx, module: workletModule };
+}
+
+/** One ElevenLabs input frame: base64 linear16 16kHz mono. */
+function elevenLabsFrame(buffer: ArrayBuffer): string {
+	return JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: pcmToBase64(buffer), commit: false, sample_rate: 16000 });
 }
 
 /** RMS (0..1) → normalized 0..1 across the audible dB window. */
@@ -375,6 +384,13 @@ export function useDictation({ append, destination = "primary", disabled = false
 	// the per-run nodes disconnect on teardown; the socket is recreated per
 	// run; the AudioContext is app-lifetime (mitigation C).
 	const wsRef = useRef<WebSocket | null>(null);
+	/** Which engine this run's socket speaks (ElevenLabs sends JSON frames). */
+	const engineRef = useRef<SttEngine>("deepgram");
+	/** ElevenLabs: the uncommitted partial — the stop path's fallback text
+	 *  if the final commit never lands before the safety net. */
+	const partialRef = useRef("");
+	/** ElevenLabs: set once stop() sent the closing commit. */
+	const closingRef = useRef(false);
 	const streamRef = useRef<MediaStream | null>(null);
 	/** Per-run graph nodes — the CONTEXT outlives runs (mitigation C). */
 	const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -465,9 +481,87 @@ export function useDictation({ append, destination = "primary", disabled = false
 		} else complete(failure);
 	}, [flush, owner, setPhase]);
 
+	/** ElevenLabs Scribe v2 realtime: JSON frames (base64 PCM), VAD commits
+	 *  on pauses; committed segments buffer exactly like Deepgram finals. */
+	const openElevenLabs = useCallback(
+		(gen: number, token: string, language: DictationLanguage) => {
+			const ws = new WebSocket(elevenLabsListenUrl(language, token));
+			wsRef.current = ws;
+			partialRef.current = "";
+			closingRef.current = false;
+			ws.addEventListener("open", () => {
+				if (gen !== genRef.current) return;
+				for (const frame of pendingRef.current) ws.send(elevenLabsFrame(frame));
+				pendingRef.current = [];
+				setPhase("recording");
+			});
+			ws.addEventListener("message", (ev) => {
+				if (gen !== genRef.current) return;
+				let msg: { message_type?: string; text?: string; error?: string; message?: string };
+				try {
+					msg = JSON.parse(ev.data as string);
+				} catch {
+					return;
+				}
+				const type = msg.message_type ?? "";
+				if (type === "partial_transcript") {
+					partialRef.current = msg.text ?? "";
+				} else if (type === "committed_transcript") {
+					const text = (msg.text ?? "").trim();
+					if (text) bufferRef.current.push(text);
+					partialRef.current = "";
+					// The closing commit landed: the run is complete.
+					if (closingRef.current) cleanup();
+				} else if (/error/i.test(type)) {
+					if (type === "insufficient_audio_activity" || /insufficient_audio/i.test(type)) {
+						if (closingRef.current) cleanup();
+						return;
+					}
+					setError(`ElevenLabs: ${msg.error ?? msg.message ?? type}`);
+					cleanup();
+				}
+			});
+			ws.addEventListener("close", (ev) => {
+				if (gen !== genRef.current) return;
+				if (closingRef.current || ev.code === 1000) {
+					if (partialRef.current.trim()) bufferRef.current.push(partialRef.current.trim());
+					partialRef.current = "";
+					cleanup();
+					return;
+				}
+				if (reconnectsRef.current < 1) {
+					reconnectsRef.current++;
+					if (partialRef.current.trim()) bufferRef.current.push(partialRef.current.trim());
+					mintFreshToken()
+						.then((t) => {
+							if (gen === genRef.current) openSocket(gen, t, language);
+						})
+						.catch(() => {
+							if (gen === genRef.current) {
+								setError("ElevenLabs reconnect failed");
+								cleanup();
+							}
+						});
+				} else {
+					setError(`ElevenLabs connection lost (${ev.code})`);
+					cleanup();
+				}
+			});
+		},
+		// openSocket is referenced lazily (reconnect) through the ref below.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[cleanup, setPhase],
+	);
+
 	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
 	const openSocket = useCallback(
-		(gen: number, token: string, language: DictationLanguage) => {
+		(gen: number, minted: MintedToken, language: DictationLanguage) => {
+			engineRef.current = minted.engine;
+			if (minted.engine === "elevenlabs") {
+				openElevenLabs(gen, minted.token, language);
+				return;
+			}
+			const token = minted.token;
 			// Minted JWTs authenticate via the "bearer" subprotocol — ["token",
 			// jwt] is rejected at the handshake (verified live; "token" is for
 			// raw API keys only, as in the owner's pi dictate extension).
@@ -527,7 +621,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 				}
 			});
 		},
-		[cleanup, setPhase],
+		[cleanup, setPhase, openElevenLabs],
 	);
 
 	const start = useCallback(async (destination?: DictationDestination) => {
@@ -596,7 +690,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 					levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
 				} else if (msg.type === "audio") {
 					const ws = wsRef.current;
-					if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer!);
+					if (ws && ws.readyState === WebSocket.OPEN) ws.send(engineRef.current === "elevenlabs" ? elevenLabsFrame(msg.buffer!) : msg.buffer!);
 					// Mitigation A: not OPEN yet (handshake or reconnect gap) —
 					// queue, capped; the open handler flushes in order.
 					else {
@@ -624,7 +718,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 			return;
 		}
 		if (gen !== genRef.current) return;
-		let token: string;
+		let token: MintedToken;
 		try {
 			token = await tokenPromise;
 		} catch (e) {
@@ -654,7 +748,23 @@ export function useDictation({ append, destination = "primary", disabled = false
 		workletRef.current = null;
 
 		const ws = wsRef.current;
-		if (ws && ws.readyState === WebSocket.OPEN) {
+		if (ws && ws.readyState === WebSocket.OPEN && engineRef.current === "elevenlabs") {
+			closingRef.current = true;
+			try {
+				// Force-commit whatever is still uncommitted; the committed
+				// transcript (or the close) finishes the run.
+				ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: "", commit: true, sample_rate: 16000 }));
+			} catch {
+				cleanup();
+				return;
+			}
+			safetyRef.current = setTimeout(() => {
+				if (gen !== genRef.current) return;
+				if (partialRef.current.trim()) bufferRef.current.push(partialRef.current.trim());
+				partialRef.current = "";
+				cleanup();
+			}, 4000);
+		} else if (ws && ws.readyState === WebSocket.OPEN) {
 			try {
 				ws.send(JSON.stringify({ type: "CloseStream" }));
 			} catch {
@@ -818,7 +928,7 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 					onClick={() => {
 						if (keyless) {
 							clearError();
-							openSettings("keys", DEEPGRAM_KEY_ID);
+							openSettings("keys", ELEVENLABS_KEY_ID);
 						} else {
 							toggle();
 						}

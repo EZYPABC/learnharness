@@ -31,6 +31,12 @@ export interface AuthKeyInfo {
 
 export const AUTH_KEYS: readonly AuthKeyInfo[] = [
 	{
+		id: "ELEVENLABS_API_KEY",
+		label: "ElevenLabs",
+		description: "Voice key: Scribe realtime dictation (preferred over Deepgram when set) and read-aloud of the teacher's messages.",
+		docsUrl: "https://elevenlabs.io/app/settings/api-keys",
+	},
+	{
 		id: "DEEPGRAM_API_KEY",
 		label: "Deepgram",
 		description: "Speech-to-text key for dictation — needs ≥ Member permission in the Deepgram console to mint tokens.",
@@ -200,6 +206,8 @@ export function validateKeyShape(id: string, rawValue: string): KeyShapeResult {
 			return value.startsWith("fc-")
 				? nonEmpty(20)
 				: { ok: false, error: `${id} must start with "fc-" (Firecrawl's key format)` };
+		case "ELEVENLABS_API_KEY":
+			return value.startsWith("sk_") ? nonEmpty(20) : { ok: false, error: `${id} must start with "sk_" (ElevenLabs' key format)` };
 		case "DEEPGRAM_API_KEY":
 			// No public format — the length floor only catches truncated pastes.
 			return nonEmpty(20);

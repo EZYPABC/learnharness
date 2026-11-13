@@ -25,6 +25,7 @@ import {
 	ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { SpeakButton } from "@/components/speak-button";
 import { PathText } from "@/components/file-path-chip";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -1967,6 +1968,15 @@ export function Chat({
 												}
 											})}
 										</MessageContent>
+										{m.role === "assistant" && !(status === "streaming" && mi === messages.length - 1) && (() => {
+											// Fork: read-aloud for the teacher's prose (text parts only).
+											const spoken = m.parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n\n");
+											return spoken.trim() ? (
+												<div className="-mt-1 flex justify-start" data-testid="message-actions">
+													<SpeakButton id={m.id || `m-${mi}`} text={spoken} />
+												</div>
+											) : null;
+										})()}
 										{m.role === "assistant" && renderSideEntry(sideEntries.get(m.id)?.get(m.parts.length))}
 									</Message>
 									)}

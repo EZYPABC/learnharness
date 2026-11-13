@@ -44,6 +44,9 @@ import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { DictationLanguageSetting } from "@/components/dictation-language";
 
+/** Voice-engine keys render under "Dictation" (fork: ElevenLabs + Deepgram). */
+const VOICE_KEY_IDS: ReadonlySet<string> = new Set(["ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY"]);
+
 /** One pi-ai provider with plain API-key auth (the Platform seam —
  *  derived from pi-ai's own env-key table; no drift possible). */
 export interface ProviderKeyInfo {
@@ -581,7 +584,7 @@ export function KeysSection({
 			</SettingsGroup>
 
 			{(["Dictation", "Search"] as const).map((label) => <SettingsGroup key={label} label={label} testid={label === "Dictation" ? "group-dictation" : "group-search"}>
-				{toolRows.filter((status) => label === "Dictation" ? status.id === "DEEPGRAM_API_KEY" : status.id !== "DEEPGRAM_API_KEY").map((status) => (
+				{toolRows.filter((status) => label === "Dictation" ? VOICE_KEY_IDS.has(status.id) : !VOICE_KEY_IDS.has(status.id)).map((status) => (
 					<KeyTableRow
 						key={status.id}
 						label={status.info?.label ?? status.id}
@@ -602,7 +605,7 @@ export function KeysSection({
 				{label === "Dictation" && <>
 					<DictationLanguageSetting />
 					<p data-testid="dictation-setup-hint" className="px-1 text-[11px] leading-relaxed text-muted-foreground/70">
-						Create a <a
+						ElevenLabs is used when its key is set (dictation + read-aloud). Otherwise, create a <a
 							href="https://console.deepgram.com/"
 							target="_blank"
 							rel="noreferrer"
